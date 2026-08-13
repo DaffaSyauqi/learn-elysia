@@ -1,0 +1,13 @@
+{
+  "version": "7",
+  "dialect": "mysql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "5",
+      "when": 1786631163738,
+      "tag": "0000_zippy_sentinels",
+      "breakpoints": true
+    }
+  ]
+}
