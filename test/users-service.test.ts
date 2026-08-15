@@ -4,6 +4,7 @@ import { getDatabase } from "../src/db/client";
 import {
   createUsersService,
   EmailAlreadyRegisteredError,
+  InvalidCredentialsError,
 } from "../src/services/users-service";
 
 type Database = ReturnType<typeof getDatabase>;
@@ -16,6 +17,13 @@ describe("users service", () => {
         values: async (values: Record<string, string>) => {
           insertedValues = values;
         },
+      }),
+      select: () => ({
+        from: () => ({
+          where: () => ({
+            limit: async () => [{ password: "hash" }],
+          }),
+        }),
       }),
     } as unknown as Database;
     const service = createUsersService(() => database);
@@ -76,5 +84,103 @@ describe("users service", () => {
         password: "123",
       }),
     ).rejects.toBe(databaseError);
+  });
+
+  it("returns a token for valid credentials", async () => {
+    const database = {
+      select: () => ({
+        from: () => ({
+          where: () => ({
+            limit: async () => [
+              { id: 1, email: "daffa@gmail.com", password: await Bun.password.hash("123", { algorithm: "bcrypt", cost: 10 }) },
+            ],
+          }),
+        }),
+      }),
+      insert: () => ({
+        values: async (values: Record<string, string | number>) => {
+          expect(values.token).toMatch(
+            /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+          );
+          expect(values.userId).toBe(1);
+        },
+      }),
+    } as unknown as Database;
+    const service = createUsersService(() => database);
+
+    const token = await service.loginUser({ email: "daffa@gmail.com", password: "123" });
+    expect(token).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+    );
+  });
+
+  it("normalizes email before lookup", async () => {
+    const database = {
+      select: () => ({
+        from: () => ({
+          where: () => ({
+            limit: async () => [
+              { id: 1, email: "daffa@gmail.com", password: await Bun.password.hash("123", { algorithm: "bcrypt", cost: 10 }) },
+            ],
+          }),
+        }),
+      }),
+      insert: () => ({
+        values: async (values: Record<string, string | number>) => {
+          expect(values.token).toMatch(
+            /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+          );
+          expect(values.userId).toBe(1);
+        },
+      }),
+    } as unknown as Database;
+    const service = createUsersService(() => database);
+
+    const token = await service.loginUser({ email: "  DAFFA@gmail.com ", password: "123" });
+    expect(token).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+    );
+  });
+
+  it("returns invalid credentials for unknown email", async () => {
+    const database = {
+      select: () => ({
+        from: () => ({
+          where: () => ({
+            limit: async () => [],
+          }),
+        }),
+      }),
+      insert: () => ({
+        values: async () => {},
+      }),
+    } as unknown as Database;
+    const service = createUsersService(() => database);
+
+    expect(
+      service.loginUser({ email: "unknown@example.com", password: "123" }),
+    ).rejects.toBeInstanceOf(InvalidCredentialsError);
+  });
+
+  it("returns invalid credentials for wrong password", async () => {
+    const database = {
+      select: () => ({
+        from: () => ({
+          where: () => ({
+            limit: async () => [
+              { id: 1, email: "daffa@gmail.com", password: await Bun.password.hash("123", { algorithm: "bcrypt", cost: 10 }) },
+            ],
+          }),
+        }),
+      }),
+      insert: () => ({
+        values: async () => {},
+      }),
+    } as unknown as Database;
+    const service = createUsersService(() => database);
+
+    expect(
+      service.loginUser({ email: "daffa@gmail.com", password: "wrong" }),
+    ).rejects.toBeInstanceOf(InvalidCredentialsError);
   });
 });

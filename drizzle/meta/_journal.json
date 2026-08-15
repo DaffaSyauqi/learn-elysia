@@ -15,6 +15,13 @@
       "when": 1786718014328,
       "tag": "0001_common_supreme_intelligence",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1786766960833,
+      "tag": "0002_far_human_torch",
+      "breakpoints": true
     }
   ]
 }
