@@ -34,6 +34,28 @@ Response berhasil:
 
 Email disimpan dalam lowercase dan harus unik. Password disimpan sebagai hash bcrypt, bukan plaintext. Email yang sudah terdaftar menghasilkan status `409`, sedangkan request yang tidak valid menghasilkan status `422`.
 
+## Login User
+
+Gunakan `POST /api/users/login` untuk login dengan email dan password yang sudah terdaftar:
+
+```json
+{
+  "email": "daffa@gmail.com",
+  "password": "123"
+}
+```
+
+Response berhasil:
+
+```json
+{
+  "statusCode": 200,
+  "data": "550e8400-e29b-41d4-a716-446655440000"
+}
+```
+
+Nilai `data` adalah token UUID session yang harus diperlakukan sebagai rahasia. Email dinormalisasi menjadi lowercase sebelum pencarian. Jika kredensial salah, API mengembalikan status `401` dengan pesan `Email atau password salah`. Request yang tidak valid menghasilkan status `422`.
+
 ## Integration Test
 
 Siapkan `DATABASE_URL_TEST` yang menunjuk ke database MySQL khusus test, lalu jalankan `bun test`. Integration test dilewati jika variable tersebut tidak tersedia dan akan berhenti jika nilainya sama dengan `DATABASE_URL` untuk mencegah perubahan pada database development.

@@ -1,8 +1,14 @@
+import { eq } from "drizzle-orm";
 import { getDatabase } from "../db/client";
-import { users } from "../db/schema";
+import { session, users } from "../db/schema";
 
 export type RegisterUserInput = {
   name: string;
+  email: string;
+  password: string;
+};
+
+export type LoginUserInput = {
   email: string;
   password: string;
 };
@@ -11,6 +17,13 @@ export class EmailAlreadyRegisteredError extends Error {
   constructor() {
     super("Email sudah terdaftar");
     this.name = "EmailAlreadyRegisteredError";
+  }
+}
+
+export class InvalidCredentialsError extends Error {
+  constructor() {
+    super("Email atau password salah");
+    this.name = "InvalidCredentialsError";
   }
 }
 
@@ -44,6 +57,29 @@ export function createUsersService(databaseProvider: DatabaseProvider = getDatab
 
         throw error;
       }
+    },
+
+    async loginUser(input: LoginUserInput): Promise<string> {
+      const database = databaseProvider();
+
+      const [user] = await database
+        .select()
+        .from(users)
+        .where(eq(users.email, input.email.trim().toLowerCase()))
+        .limit(1);
+
+      if (!user || !(await Bun.password.verify(input.password, user.password))) {
+        throw new InvalidCredentialsError();
+      }
+
+      const token = crypto.randomUUID();
+
+      await database.insert(session).values({
+        token,
+        userId: user.id,
+      });
+
+      return token;
     },
   };
 }

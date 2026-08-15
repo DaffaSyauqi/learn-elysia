@@ -3,7 +3,7 @@ import { drizzle } from "drizzle-orm/mysql2";
 import { migrate } from "drizzle-orm/mysql2/migrator";
 import mysql from "mysql2/promise";
 
-import { users } from "../src/db/schema";
+import { session, users } from "../src/db/schema";
 import { createUsersRoutes } from "../src/routes/users-route";
 import { createUsersService } from "../src/services/users-service";
 
@@ -16,7 +16,7 @@ if (testDatabaseUrl && testDatabaseUrl === Bun.env.DATABASE_URL) {
 describe.skipIf(!testDatabaseUrl)("user registration integration", () => {
   const pool = testDatabaseUrl ? mysql.createPool(testDatabaseUrl) : undefined;
   const database = pool
-    ? drizzle({ client: pool, schema: { users }, mode: "default" })
+    ? drizzle({ client: pool, schema: { users, session }, mode: "default" })
     : undefined;
   const app = createUsersRoutes(createUsersService(() => database!));
 
@@ -28,6 +28,7 @@ describe.skipIf(!testDatabaseUrl)("user registration integration", () => {
 
   beforeEach(async () => {
     if (database) {
+      await database.delete(session);
       await database.delete(users);
     }
   });
@@ -82,4 +83,148 @@ describe.skipIf(!testDatabaseUrl)("user registration integration", () => {
     expect(responses.map((response) => response.status).sort()).toEqual([200, 409]);
     expect(storedUsers).toHaveLength(1);
   });
+});
+
+describe.skipIf(!testDatabaseUrl)("user login integration", () => {
+  const pool = testDatabaseUrl ? mysql.createPool(testDatabaseUrl) : undefined;
+  const database = pool
+    ? drizzle({ client: pool, schema: { users, session }, mode: "default" })
+    : undefined;
+  const app = createUsersRoutes(createUsersService(() => database!));
+
+  beforeAll(async () => {
+    if (database) {
+      await migrate(database, { migrationsFolder: "./drizzle" });
+    }
+  });
+
+  beforeEach(async () => {
+    if (database) {
+      await database.delete(session);
+      await database.delete(users);
+    }
+  });
+
+  afterAll(async () => {
+    await pool?.end();
+  });
+
+  it("returns a token for valid credentials", async () => {
+    await register("Daffa", "daffa@gmail.com");
+    const response = await app.handle(
+      new Request("http://localhost/api/users/login", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: "daffa@gmail.com", password: "123" }),
+      }),
+    );
+    const storedSessions = await database!.select().from(session);
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body).toEqual({ statusCode: 200, data: expect.any(String) });
+    expect(body.data).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+    );
+    expect(storedSessions).toHaveLength(1);
+    expect(storedSessions[0]?.token).toBe(body.data);
+    expect(storedSessions[0]?.userId).toBe(1);
+  });
+
+  it("normalizes email before lookup", async () => {
+    await register("Daffa", "daffa@gmail.com");
+    const response = await app.handle(
+      new Request("http://localhost/api/users/login", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: "  DAFFA@gmail.com ", password: "123" }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+  });
+
+  it("returns invalid credentials for unknown email", async () => {
+    const response = await app.handle(
+      new Request("http://localhost/api/users/login", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: "unknown@example.com", password: "123" }),
+      }),
+    );
+
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({
+      statusCode: 401,
+      error: "Email atau password salah",
+    });
+  });
+
+  it("returns invalid credentials for wrong password", async () => {
+    await register("Daffa", "daffa@gmail.com");
+    const response = await app.handle(
+      new Request("http://localhost/api/users/login", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: "daffa@gmail.com", password: "wrong" }),
+      }),
+    );
+
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({
+      statusCode: 401,
+      error: "Email atau password salah",
+    });
+  });
+
+  it("does not create a session for invalid credentials", async () => {
+    await register("Daffa", "daffa@gmail.com");
+    const response = await app.handle(
+      new Request("http://localhost/api/users/login", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: "daffa@gmail.com", password: "wrong" }),
+      }),
+    );
+    const storedSessions = await database!.select().from(session);
+
+    expect(response.status).toBe(401);
+    expect(storedSessions).toHaveLength(0);
+  });
+
+  it("creates a separate session for each successful login", async () => {
+    await register("Daffa", "daffa@gmail.com");
+    const first = await app.handle(
+      new Request("http://localhost/api/users/login", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: "daffa@gmail.com", password: "123" }),
+      }),
+    );
+    const second = await app.handle(
+      new Request("http://localhost/api/users/login", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: "daffa@gmail.com", password: "123" }),
+      }),
+    );
+    const storedSessions = await database!.select().from(session);
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    const firstBody = await first.json();
+    const secondBody = await second.json();
+    expect(firstBody.data).not.toBe(secondBody.data);
+    expect(storedSessions).toHaveLength(2);
+  });
+
+  function register(name: string, email: string, password = "123") {
+    return app.handle(
+      new Request("http://localhost/api/users", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name, email, password }),
+      }),
+    );
+  }
 });
