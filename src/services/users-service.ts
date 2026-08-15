@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 import { getDatabase } from "../db/client";
 import { session, users } from "../db/schema";
+import crypto from "crypto";
 
 export type RegisterUserInput = {
   name: string;
@@ -30,10 +31,27 @@ export class InvalidCredentialsError extends Error {
 type DatabaseProvider = () => ReturnType<typeof getDatabase>;
 
 function isDuplicateEmailError(error: unknown): boolean {
-  if (typeof error !== "object" || error === null) return false;
+  // Drizzle / mysql2 may wrap the underlying driver error. Walk a few layers
+  // of nested properties (cause, originalError, err) to find the real DB error.
+  if (!error) return false;
 
-  const databaseError = error as { code?: unknown; errno?: unknown };
-  return databaseError.code === "ER_DUP_ENTRY" || databaseError.errno === 1062;
+  let e: any = error as any;
+  const visited = new Set<any>();
+  for (let depth = 0; depth < 6 && e && typeof e === "object"; depth++) {
+    if (visited.has(e)) break;
+    visited.add(e);
+
+    const code = e.code;
+    const errno = e.errno;
+    const message = e.message || e.sqlMessage || "";
+
+    if (code === "ER_DUP_ENTRY" || errno === 1062) return true;
+    if (typeof message === "string" && /duplicate entry|er_dup_entry|duplicate key/i.test(message)) return true;
+
+    e = e.cause ?? e.originalError ?? e.err ?? e.driverError ?? e.sqlError ?? null;
+  }
+
+  return false;
 }
 
 export function createUsersService(databaseProvider: DatabaseProvider = getDatabase) {
@@ -72,14 +90,28 @@ export function createUsersService(databaseProvider: DatabaseProvider = getDatab
         throw new InvalidCredentialsError();
       }
 
-      const token = crypto.randomUUID();
+      const MAX_RETRIES = 3;
+      for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+        const token = crypto.randomUUID();
+        try {
+          await database.insert(session).values({
+            token,
+            userId: user.id,
+          });
 
-      await database.insert(session).values({
-        token,
-        userId: user.id,
-      });
+          return token;
+        } catch (error) {
+          // detect unique token collision (very unlikely) and retry a few times
+          const msg = String((error && (error as any).message) || error);
+          const isUniqueCollision = /duplicate key|unique constraint|ER_DUP_ENTRY|Duplicate entry/i.test(msg);
+          if (!isUniqueCollision) {
+            throw error;
+          }
+          // otherwise loop to retry
+        }
+      }
 
-      return token;
+      throw new Error("Gagal membuat session token setelah beberapa percobaan");
     },
   };
 }
