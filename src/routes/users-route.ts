@@ -114,6 +114,11 @@ export function createUsersRoutes(usersService: UsersService = createUsersServic
           },
           { additionalProperties: false },
         ),
+        detail: {
+          summary: "Mendaftarkan user baru",
+          description: "Membuat user baru dengan password yang di-hash menggunakan bcrypt.",
+          tags: ["Users"],
+        },
       },
     );
 
@@ -159,6 +164,11 @@ export function createUsersRoutes(usersService: UsersService = createUsersServic
           },
           { additionalProperties: false },
         ),
+        detail: {
+          summary: "Login user",
+          description: "Memverifikasi email dan password lalu membuat session token UUID baru.",
+          tags: ["Users", "Authentication"],
+        },
       },
     );
 
@@ -197,6 +207,14 @@ export function createUsersRoutes(usersService: UsersService = createUsersServic
         } as const;
       }
     },
+    {
+      detail: {
+        summary: "Mendapatkan profil user saat ini",
+        description: "Mengambil profil user berdasarkan session token pada Authorization header.",
+        tags: ["Users"],
+        security: [{ bearerAuth: [] }],
+      },
+    },
   );
 
   const logoutRoutes = new Elysia({ prefix: "", normalize: false }).delete(
@@ -225,6 +243,14 @@ export function createUsersRoutes(usersService: UsersService = createUsersServic
           error: "Terjadi kesalahan pada server",
         } as const;
       }
+    },
+    {
+      detail: {
+        summary: "Logout user",
+        description: "Menghapus session berdasarkan Bearer token sehingga token tidak dapat digunakan lagi.",
+        tags: ["Authentication"],
+        security: [{ bearerAuth: [] }],
+      },
     },
   );
 
