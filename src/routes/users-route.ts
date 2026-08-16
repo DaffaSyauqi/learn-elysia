@@ -4,6 +4,7 @@ import {
   createUsersService,
   EmailAlreadyRegisteredError,
   InvalidCredentialsError,
+  UnauthorizedError,
   type LoginUserInput,
   type RegisterUserInput,
   type UsersService,
@@ -18,6 +19,19 @@ const invalidLoginResponse = {
   statusCode: 422,
   error: "Data login tidak valid",
 } as const;
+
+const unauthorizedResponse = {
+  statusCode: 401,
+  error: "Unauthorized",
+} as const;
+
+const BEARER_PATTERN = /^Bearer\s+(\S+)$/i;
+
+function extractBearerToken(authorization: string | undefined): string | undefined {
+  if (!authorization) return undefined;
+  const match = BEARER_PATTERN.exec(authorization);
+  return match?.[1];
+}
 
 function normalizeRegistrationInput(input: RegisterUserInput): RegisterUserInput {
   return {
@@ -148,9 +162,47 @@ export function createUsersRoutes(usersService: UsersService = createUsersServic
       },
     );
 
+  const meRoutes = new Elysia({ prefix: "", normalize: false }).get(
+    "/me",
+    async ({ headers, set }) => {
+      const token = extractBearerToken(headers.authorization);
+
+      if (!token) {
+        set.status = 401;
+        return unauthorizedResponse;
+      }
+
+      try {
+        const user = await usersService.getUserBySessionToken(token);
+        set.status = 200;
+        return {
+          statusCode: 200,
+          data: {
+            id: user.id,
+            name: user.name,
+            email: user.email,
+            created_at: user.createdAt,
+          },
+        } as const;
+      } catch (error) {
+        if (error instanceof UnauthorizedError) {
+          set.status = 401;
+          return unauthorizedResponse;
+        }
+
+        set.status = 500;
+        return {
+          statusCode: 500,
+          error: "Terjadi kesalahan pada server",
+        } as const;
+      }
+    },
+  );
+
   return new Elysia({ prefix: "/api/users", normalize: false })
     .use(registrationRoutes)
-    .use(loginRoutes);
+    .use(loginRoutes)
+    .use(meRoutes);
 }
 
 export const usersRoutes = createUsersRoutes();

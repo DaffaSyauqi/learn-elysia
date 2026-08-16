@@ -228,3 +228,94 @@ describe.skipIf(!testDatabaseUrl)("user login integration", () => {
     );
   }
 });
+
+describe.skipIf(!testDatabaseUrl)("user profile integration", () => {
+  const pool = testDatabaseUrl ? mysql.createPool(testDatabaseUrl) : undefined;
+  const database = pool
+    ? drizzle({ client: pool, schema: { users, session }, mode: "default" })
+    : undefined;
+  const app = createUsersRoutes(createUsersService(() => database!));
+
+  beforeAll(async () => {
+    if (database) {
+      await migrate(database, { migrationsFolder: "./drizzle" });
+    }
+  });
+
+  beforeEach(async () => {
+    if (database) {
+      await database.delete(session);
+      await database.delete(users);
+    }
+  });
+
+  afterAll(async () => {
+    await pool?.end();
+  });
+
+  async function registerAndLogin(email = "daffa@gmail.com") {
+    await app.handle(
+      new Request("http://localhost/api/users", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: "Daffa", email, password: "123" }),
+      }),
+    );
+    const login = await app.handle(
+      new Request("http://localhost/api/users/login", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email, password: "123" }),
+      }),
+    );
+    const body = await login.json();
+    return body.data as string;
+  }
+
+  function getProfile(token?: string) {
+    const headers: Record<string, string> = {};
+    if (token) {
+      headers.authorization = `Bearer ${token}`;
+    }
+    return app.handle(new Request("http://localhost/api/users/me", { method: "GET", headers }));
+  }
+
+  it("returns the profile for a valid session token", async () => {
+    const token = await registerAndLogin();
+
+    const response = await getProfile(token);
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body).toEqual({
+      statusCode: 200,
+      data: {
+        id: expect.any(Number),
+        name: "Daffa",
+        email: "daffa@gmail.com",
+        created_at: expect.any(String),
+      },
+    });
+    expect(JSON.stringify(body)).not.toContain("password");
+  });
+
+  it("returns unauthorized when the token has no matching session", async () => {
+    const response = await getProfile("unknown-token");
+
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({
+      statusCode: 401,
+      error: "Unauthorized",
+    });
+  });
+
+  it("returns unauthorized when no token is provided", async () => {
+    const response = await getProfile();
+
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({
+      statusCode: 401,
+      error: "Unauthorized",
+    });
+  });
+});

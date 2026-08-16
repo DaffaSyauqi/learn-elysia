@@ -5,6 +5,7 @@ import {
   createUsersService,
   EmailAlreadyRegisteredError,
   InvalidCredentialsError,
+  UnauthorizedError,
 } from "../src/services/users-service";
 
 type Database = ReturnType<typeof getDatabase>;
@@ -182,5 +183,92 @@ describe("users service", () => {
     expect(
       service.loginUser({ email: "daffa@gmail.com", password: "wrong" }),
     ).rejects.toBeInstanceOf(InvalidCredentialsError);
+  });
+});
+
+describe("users service getUserBySessionToken", () => {
+  it("returns the user profile for a matching session token", async () => {
+    let whereToken: string | undefined;
+    const database = {
+      select: () => ({
+        from: () => ({
+          innerJoin: () => ({
+            where: (condition: unknown) => {
+              whereToken = condition as string;
+              return {
+                limit: async () => [
+                  {
+                    id: 1,
+                    name: "Daffa",
+                    email: "daffa@gmail.com",
+                    createdAt: new Date("2026-08-16T10:00:00.000Z"),
+                  },
+                ],
+              };
+            },
+          }),
+        }),
+      }),
+    } as unknown as Database;
+    const service = createUsersService(() => database);
+
+    const user = await service.getUserBySessionToken("token-abc");
+
+    expect(user).toEqual({
+      id: 1,
+      name: "Daffa",
+      email: "daffa@gmail.com",
+      createdAt: new Date("2026-08-16T10:00:00.000Z"),
+    });
+    expect(whereToken).toBeDefined();
+  });
+
+  it("selects only the profile fields from the users table", async () => {
+    let selectedColumns: unknown;
+    const database = {
+      select: (columns: unknown) => {
+        selectedColumns = columns;
+        return {
+          from: () => ({
+            innerJoin: () => ({
+              where: () => ({
+                limit: async () => [],
+              }),
+            }),
+          }),
+        };
+      },
+    } as unknown as Database;
+    const service = createUsersService(() => database);
+
+    await expect(
+      service.getUserBySessionToken("token-abc"),
+    ).rejects.toBeInstanceOf(UnauthorizedError);
+
+    expect(Object.keys(selectedColumns as Record<string, unknown>)).toEqual([
+      "id",
+      "name",
+      "email",
+      "createdAt",
+    ]);
+  });
+
+  it("throws unauthorized when no session matches the token", async () => {
+    const database = {
+      select: () => ({
+        from: () => ({
+          innerJoin: () => ({
+            where: () => ({
+              limit: async () => [],
+            }),
+          }),
+        }),
+      }),
+    } as unknown as Database;
+    const service = createUsersService(() => database);
+
+    expect(
+      service.getUserBySessionToken("unknown-token"),
+    ).rejects.toBeInstanceOf(UnauthorizedError);
   });
 });

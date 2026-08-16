@@ -4,8 +4,10 @@ import { createUsersRoutes } from "../src/routes/users-route";
 import {
   EmailAlreadyRegisteredError,
   InvalidCredentialsError,
+  UnauthorizedError,
   type LoginUserInput,
   type RegisterUserInput,
+  type UserProfile,
   type UsersService,
 } from "../src/services/users-service";
 
@@ -17,11 +19,27 @@ function createRequest(path: string, body: string | object): Request {
   });
 }
 
+function createGetRequest(path: string, authorization?: string): Request {
+  const headers: Record<string, string> = {};
+  if (authorization) {
+    headers.authorization = authorization;
+  }
+  return new Request(`http://localhost${path}`, { method: "GET", headers });
+}
+
+const mockProfile: UserProfile = {
+  id: 1,
+  name: "Daffa",
+  email: "daffa@gmail.com",
+  createdAt: new Date("2026-08-16T10:00:00.000Z"),
+};
+
 function createService(
   registerUser: (input: RegisterUserInput) => Promise<void>,
   loginUser: (input: LoginUserInput) => Promise<string>,
+  getUserBySessionToken: (token: string) => Promise<UserProfile> = async () => mockProfile,
 ): UsersService {
-  return { registerUser, loginUser };
+  return { registerUser, loginUser, getUserBySessionToken };
 }
 
 describe("POST /api/users", () => {
@@ -227,4 +245,116 @@ describe("POST /api/users/login", () => {
       });
     });
   }
+});
+
+describe("GET /api/users/me", () => {
+  it("returns the user profile for a valid bearer token", async () => {
+    let receivedToken: string | undefined;
+    const app = createUsersRoutes(
+      createService(async () => {}, async () => "token-123", async (token) => {
+        receivedToken = token;
+        return mockProfile;
+      }),
+    );
+
+    const response = await app.handle(
+      createGetRequest("/api/users/me", "Bearer token-abc"),
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      statusCode: 200,
+      data: {
+        id: 1,
+        name: "Daffa",
+        email: "daffa@gmail.com",
+        created_at: "2026-08-16T10:00:00.000Z",
+      },
+    });
+    expect(receivedToken).toBe("token-abc");
+  });
+
+  it("returns unauthorized when the authorization header is missing", async () => {
+    const app = createUsersRoutes(createService(async () => {}, async () => "token-123"));
+
+    const response = await app.handle(createGetRequest("/api/users/me"));
+
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({
+      statusCode: 401,
+      error: "Unauthorized",
+    });
+  });
+
+  const invalidAuthorizations: Array<[string, string | undefined]> = [
+    ["plain token without Bearer scheme", "token-abc"],
+    ["empty token", "Bearer "],
+    ["extra whitespace", "Bearer  "],
+    ["empty header value", ""],
+  ];
+
+  for (const [scenario, authorization] of invalidAuthorizations) {
+    it(`returns unauthorized for ${scenario}`, async () => {
+      const app = createUsersRoutes(createService(async () => {}, async () => "token-123"));
+
+      const response = await app.handle(
+        createGetRequest("/api/users/me", authorization),
+      );
+
+      expect(response.status).toBe(401);
+      expect(await response.json()).toEqual({
+        statusCode: 401,
+        error: "Unauthorized",
+      });
+    });
+  }
+
+  it("returns unauthorized for a token with no matching session", async () => {
+    const app = createUsersRoutes(
+      createService(async () => {}, async () => "token-123", async () => {
+        throw new UnauthorizedError();
+      }),
+    );
+
+    const response = await app.handle(
+      createGetRequest("/api/users/me", "Bearer unknown-token"),
+    );
+
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({
+      statusCode: 401,
+      error: "Unauthorized",
+    });
+  });
+
+  it("returns a safe response for unexpected errors", async () => {
+    const app = createUsersRoutes(
+      createService(async () => {}, async () => "token-123", async () => {
+        throw new Error("database credentials leaked");
+      }),
+    );
+
+    const response = await app.handle(
+      createGetRequest("/api/users/me", "Bearer token-abc"),
+    );
+
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({
+      statusCode: 500,
+      error: "Terjadi kesalahan pada server",
+    });
+  });
+
+  it("does not expose the password or session token in the response", async () => {
+    const app = createUsersRoutes(createService(async () => {}, async () => "token-123"));
+
+    const response = await app.handle(
+      createGetRequest("/api/users/me", "Bearer token-abc"),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(JSON.stringify(body)).not.toContain("password");
+    expect(JSON.stringify(body)).not.toContain("token-abc");
+  });
 });
