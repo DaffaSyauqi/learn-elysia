@@ -28,6 +28,20 @@ export class InvalidCredentialsError extends Error {
   }
 }
 
+export class UnauthorizedError extends Error {
+  constructor() {
+    super("Unauthorized");
+    this.name = "UnauthorizedError";
+  }
+}
+
+export type UserProfile = {
+  id: number;
+  name: string;
+  email: string;
+  createdAt: Date;
+};
+
 type DatabaseProvider = () => ReturnType<typeof getDatabase>;
 
 function isDuplicateEmailError(error: unknown): boolean {
@@ -112,6 +126,26 @@ export function createUsersService(databaseProvider: DatabaseProvider = getDatab
       }
 
       throw new Error("Gagal membuat session token setelah beberapa percobaan");
+    },
+
+    async getUserBySessionToken(token: string): Promise<UserProfile> {
+      const [user] = await databaseProvider()
+        .select({
+          id: users.id,
+          name: users.name,
+          email: users.email,
+          createdAt: users.createdAt,
+        })
+        .from(session)
+        .innerJoin(users, eq(session.userId, users.id))
+        .where(eq(session.token, token))
+        .limit(1);
+
+      if (!user) {
+        throw new UnauthorizedError();
+      }
+
+      return user;
     },
   };
 }
