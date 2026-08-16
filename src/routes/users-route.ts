@@ -199,10 +199,40 @@ export function createUsersRoutes(usersService: UsersService = createUsersServic
     },
   );
 
+  const logoutRoutes = new Elysia({ prefix: "", normalize: false }).delete(
+    "/logout",
+    async ({ headers, set }) => {
+      const token = extractBearerToken(headers.authorization);
+
+      if (!token) {
+        set.status = 401;
+        return unauthorizedResponse;
+      }
+
+      try {
+        await usersService.logoutUser(token);
+        set.status = 200;
+        return { statusCode: 200, data: "OK" } as const;
+      } catch (error) {
+        if (error instanceof UnauthorizedError) {
+          set.status = 401;
+          return unauthorizedResponse;
+        }
+
+        set.status = 500;
+        return {
+          statusCode: 500,
+          error: "Terjadi kesalahan pada server",
+        } as const;
+      }
+    },
+  );
+
   return new Elysia({ prefix: "/api/users", normalize: false })
     .use(registrationRoutes)
     .use(loginRoutes)
-    .use(meRoutes);
+    .use(meRoutes)
+    .use(logoutRoutes);
 }
 
 export const usersRoutes = createUsersRoutes();

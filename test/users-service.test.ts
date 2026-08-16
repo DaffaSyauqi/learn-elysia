@@ -272,3 +272,49 @@ describe("users service getUserBySessionToken", () => {
     ).rejects.toBeInstanceOf(UnauthorizedError);
   });
 });
+
+describe("users service logoutUser", () => {
+  it("deletes the session matching the token", async () => {
+    let deleteCalled = false;
+    const database = {
+      delete: () => ({
+        where: async (condition: unknown) => {
+          deleteCalled = true;
+          expect(condition).toBeDefined();
+          return [{ affectedRows: 1 }];
+        },
+      }),
+    } as unknown as Database;
+    const service = createUsersService(() => database);
+
+    await expect(service.logoutUser("token-abc")).resolves.toBeUndefined();
+    expect(deleteCalled).toBe(true);
+  });
+
+  it("throws unauthorized when no session matches the token", async () => {
+    const database = {
+      delete: () => ({
+        where: async () => [{ affectedRows: 0 }],
+      }),
+    } as unknown as Database;
+    const service = createUsersService(() => database);
+
+    expect(
+      service.logoutUser("unknown-token"),
+    ).rejects.toBeInstanceOf(UnauthorizedError);
+  });
+
+  it("preserves unexpected database errors", async () => {
+    const databaseError = new Error("connection unavailable");
+    const database = {
+      delete: () => ({
+        where: async () => {
+          throw databaseError;
+        },
+      }),
+    } as unknown as Database;
+    const service = createUsersService(() => database);
+
+    expect(service.logoutUser("token-abc")).rejects.toBe(databaseError);
+  });
+});

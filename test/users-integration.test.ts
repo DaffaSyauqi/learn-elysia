@@ -319,3 +319,123 @@ describe.skipIf(!testDatabaseUrl)("user profile integration", () => {
     });
   });
 });
+
+describe.skipIf(!testDatabaseUrl)("user logout integration", () => {
+  const pool = testDatabaseUrl ? mysql.createPool(testDatabaseUrl) : undefined;
+  const database = pool
+    ? drizzle({ client: pool, schema: { users, session }, mode: "default" })
+    : undefined;
+  const app = createUsersRoutes(createUsersService(() => database!));
+
+  beforeAll(async () => {
+    if (database) {
+      await migrate(database, { migrationsFolder: "./drizzle" });
+    }
+  });
+
+  beforeEach(async () => {
+    if (database) {
+      await database.delete(session);
+      await database.delete(users);
+    }
+  });
+
+  afterAll(async () => {
+    await pool?.end();
+  });
+
+  async function registerAndLogin() {
+    await app.handle(
+      new Request("http://localhost/api/users", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: "Daffa", email: "daffa@gmail.com", password: "123" }),
+      }),
+    );
+    const login = await app.handle(
+      new Request("http://localhost/api/users/login", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: "daffa@gmail.com", password: "123" }),
+      }),
+    );
+    const body = await login.json();
+    return body.data as string;
+  }
+
+  function logout(token?: string) {
+    const headers: Record<string, string> = {};
+    if (token) {
+      headers.authorization = `Bearer ${token}`;
+    }
+    return app.handle(new Request("http://localhost/api/users/logout", { method: "DELETE", headers }));
+  }
+
+  function getProfile(token?: string) {
+    const headers: Record<string, string> = {};
+    if (token) {
+      headers.authorization = `Bearer ${token}`;
+    }
+    return app.handle(new Request("http://localhost/api/users/me", { method: "GET", headers }));
+  }
+
+  it("deletes the session and invalidates the token", async () => {
+    const token = await registerAndLogin();
+    let storedSessions = await database!.select().from(session);
+    expect(storedSessions).toHaveLength(1);
+
+    const response = await logout(token);
+    storedSessions = await database!.select().from(session);
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ statusCode: 200, data: "OK" });
+    expect(storedSessions).toHaveLength(0);
+
+    const profile = await getProfile(token);
+    expect(profile.status).toBe(401);
+  });
+
+  it("returns unauthorized when logging out with the same token twice", async () => {
+    const token = await registerAndLogin();
+
+    const first = await logout(token);
+    const second = await logout(token);
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(401);
+    expect(await second.json()).toEqual({
+      statusCode: 401,
+      error: "Unauthorized",
+    });
+  });
+
+  it("keeps other sessions active when logging out one session", async () => {
+    const token = await registerAndLogin();
+    const login = await app.handle(
+      new Request("http://localhost/api/users/login", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: "daffa@gmail.com", password: "123" }),
+      }),
+    );
+    const secondToken = (await login.json()).data as string;
+    const storedSessions = await database!.select().from(session);
+    expect(storedSessions).toHaveLength(2);
+
+    const response = await logout(token);
+
+    expect(response.status).toBe(200);
+    expect(await getProfile(token).then((r) => r.status)).toBe(401);
+    expect(await getProfile(secondToken).then((r) => r.status)).toBe(200);
+  });
+
+  it("returns unauthorized when no token is provided", async () => {
+    const response = await logout();
+
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({
+      statusCode: 401,
+      error: "Unauthorized",
+    });
+  });
+});
