@@ -16,6 +16,7 @@ database MySQL.
 - Login dengan verifikasi password dan pembuatan session token UUID.
 - Pengambilan profil user menggunakan `Authorization: Bearer <token>`.
 - Logout dengan menghapus session token dari database.
+- Dokumentasi API interaktif menggunakan Swagger UI.
 - Unit test untuk route dan service.
 - Integration test untuk alur database jika `DATABASE_URL_TEST` tersedia.
 
@@ -94,7 +95,8 @@ hash password, pembuatan token, pencarian session, dan penghapusan session.
 ### Tanggung Jawab File Utama
 
 - `src/index.ts`: menjalankan server pada port dari `PORT`.
-- `src/app.ts`: membuat instance Elysia dan memasang route.
+- `src/app.ts`: membuat instance Elysia, mengonfigurasi plugin OpenAPI, dan
+  memasang route.
 - `src/routes/health.ts`: menyediakan `GET /health` dan
   `GET /health/database`.
 - `src/routes/users-route.ts`: menyediakan endpoint user, validasi payload,
@@ -287,6 +289,7 @@ Response unauthorized:
 - **TypeScript**: static typing untuk source code.
 - **Elysia**: framework HTTP untuk routing, request validation, dan application
   composition.
+- **@elysia/openapi**: plugin OpenAPI dan dokumentasi API interaktif.
 - **Drizzle ORM**: type-safe query builder dan definisi schema database.
 - **Drizzle Kit**: generate, menjalankan, dan mengelola migration.
 - **MySQL**: database relasional untuk data user dan session.
@@ -295,6 +298,38 @@ Response unauthorized:
 
 Dependency runtime berada di `dependencies`, sedangkan tooling TypeScript,
 Bun types, dan Drizzle Kit berada di `devDependencies`.
+
+## API Documentation
+
+Project menggunakan plugin `@elysia/openapi` untuk menghasilkan dokumentasi API
+interaktif berbasis OpenAPI. Dokumentasi menggunakan provider Swagger UI.
+
+Akses dokumentasi saat server berjalan:
+
+```text
+Swagger UI:
+http://localhost:3000/openapi
+
+Raw OpenAPI JSON:
+http://localhost:3000/openapi/json
+```
+
+Dokumentasi menampilkan seluruh endpoint, request body, response, dan
+pengelompokan berdasarkan tags. Endpoint yang membutuhkan autentikasi ditandai
+dengan security scheme `bearerAuth`.
+
+Gunakan tombol `Authorize` pada Swagger UI untuk memasukkan session token.
+Isi token tanpa awalan `Bearer`, lalu Swagger UI akan mengirimkan:
+
+```http
+Authorization: Bearer <token>
+```
+
+Token diperoleh dari response endpoint login:
+
+```http
+POST /api/users/login
+```
 
 ## Prasyarat
 
