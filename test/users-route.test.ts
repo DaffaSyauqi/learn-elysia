@@ -27,6 +27,14 @@ function createGetRequest(path: string, authorization?: string): Request {
   return new Request(`http://localhost${path}`, { method: "GET", headers });
 }
 
+function createDeleteRequest(path: string, authorization?: string): Request {
+  const headers: Record<string, string> = {};
+  if (authorization) {
+    headers.authorization = authorization;
+  }
+  return new Request(`http://localhost${path}`, { method: "DELETE", headers });
+}
+
 const mockProfile: UserProfile = {
   id: 1,
   name: "Daffa",
@@ -38,8 +46,9 @@ function createService(
   registerUser: (input: RegisterUserInput) => Promise<void>,
   loginUser: (input: LoginUserInput) => Promise<string>,
   getUserBySessionToken: (token: string) => Promise<UserProfile> = async () => mockProfile,
+  logoutUser: (token: string) => Promise<void> = async () => {},
 ): UsersService {
-  return { registerUser, loginUser, getUserBySessionToken };
+  return { registerUser, loginUser, getUserBySessionToken, logoutUser };
 }
 
 describe("POST /api/users", () => {
@@ -356,5 +365,95 @@ describe("GET /api/users/me", () => {
     expect(response.status).toBe(200);
     expect(JSON.stringify(body)).not.toContain("password");
     expect(JSON.stringify(body)).not.toContain("token-abc");
+  });
+});
+
+describe("DELETE /api/users/logout", () => {
+  it("returns OK for a valid bearer token", async () => {
+    let receivedToken: string | undefined;
+    const app = createUsersRoutes(
+      createService(async () => {}, async () => "token-123", async () => mockProfile, async (token) => {
+        receivedToken = token;
+      }),
+    );
+
+    const response = await app.handle(
+      createDeleteRequest("/api/users/logout", "Bearer token-abc"),
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ statusCode: 200, data: "OK" });
+    expect(receivedToken).toBe("token-abc");
+  });
+
+  it("returns unauthorized when the authorization header is missing", async () => {
+    const app = createUsersRoutes(createService(async () => {}, async () => "token-123"));
+
+    const response = await app.handle(createDeleteRequest("/api/users/logout"));
+
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({
+      statusCode: 401,
+      error: "Unauthorized",
+    });
+  });
+
+  const invalidAuthorizations: Array<[string, string | undefined]> = [
+    ["plain token without Bearer scheme", "token-abc"],
+    ["empty token", "Bearer "],
+    ["extra whitespace", "Bearer  "],
+    ["empty header value", ""],
+  ];
+
+  for (const [scenario, authorization] of invalidAuthorizations) {
+    it(`returns unauthorized for ${scenario}`, async () => {
+      const app = createUsersRoutes(createService(async () => {}, async () => "token-123"));
+
+      const response = await app.handle(
+        createDeleteRequest("/api/users/logout", authorization),
+      );
+
+      expect(response.status).toBe(401);
+      expect(await response.json()).toEqual({
+        statusCode: 401,
+        error: "Unauthorized",
+      });
+    });
+  }
+
+  it("returns unauthorized when the session is not found", async () => {
+    const app = createUsersRoutes(
+      createService(async () => {}, async () => "token-123", async () => mockProfile, async () => {
+        throw new UnauthorizedError();
+      }),
+    );
+
+    const response = await app.handle(
+      createDeleteRequest("/api/users/logout", "Bearer unknown-token"),
+    );
+
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({
+      statusCode: 401,
+      error: "Unauthorized",
+    });
+  });
+
+  it("returns a safe response for unexpected errors", async () => {
+    const app = createUsersRoutes(
+      createService(async () => {}, async () => "token-123", async () => mockProfile, async () => {
+        throw new Error("database credentials leaked");
+      }),
+    );
+
+    const response = await app.handle(
+      createDeleteRequest("/api/users/logout", "Bearer token-abc"),
+    );
+
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({
+      statusCode: 500,
+      error: "Terjadi kesalahan pada server",
+    });
   });
 });

@@ -147,6 +147,16 @@ export function createUsersService(databaseProvider: DatabaseProvider = getDatab
 
       return user;
     },
+
+    async logoutUser(token: string): Promise<void> {
+      const [result] = await databaseProvider()
+        .delete(session)
+        .where(eq(session.token, token));
+
+      if (result.affectedRows === 0) {
+        throw new UnauthorizedError();
+      }
+    },
   };
 }
 
