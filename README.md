@@ -1,6 +1,4 @@
-# Vibecode API
-
-Vibecode API adalah backend REST sederhana untuk manajemen user dan autentikasi
+Backend REST sederhana untuk manajemen user dan autentikasi
 berbasis session. Project ini menyediakan alur registrasi, login, melihat profil
 user yang sedang login, dan logout dengan token UUID yang disimpan di database.
 
